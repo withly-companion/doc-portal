@@ -237,4 +237,207 @@ async function doUpload(){
 }
 </script>
 </body>
+</html>  .toolbar input[type=text]{flex:1;min-width:180px}
+  .list{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .row:hover{background:var(--panel2)}
+  .fname{font-size:14px;font-weight:500;word-break:break-word}
+  .fmeta{font-size:12px;color:var(--muted);margin-top:2px}
+  .spacer{flex:1}
+  .row a, .row button{font-size:13px}
+  .empty{padding:40px 16px;text-align:center;color:var(--muted);font-size:14px}
+  .hidden{display:none !important}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:10}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:12px 18px;border-radius:10px;font-size:13px;z-index:20}
+  .toast.ok{border-color:var(--ok)}
+  .toast.err{border-color:var(--danger)}
+  .signout{background:none;border:none;color:var(--muted);text-decoration:underline;padding:0;font-weight:400}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN SCREEN ============ -->
+<div id="loginScreen" class="center">
+  <div class="card">
+    <h1>Document Portal</h1>
+    <p class="sub">Sign in with the account you were given.</p>
+    <label>Email</label>
+    <input id="loginEmail" type="email" placeholder="you@team.com" autocomplete="username">
+    <label>Password</label>
+    <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password">
+    <button class="btn-primary" onclick="attemptLogin()" id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<!-- ============ MAIN APP ============ -->
+<div id="appScreen" class="app hidden">
+  <div class="topbar">
+    <h1>📚 Document Portal</h1>
+    <div class="who">Signed in as <b id="whoName"></b><span id="roleBadge" class="badge hidden"></span>
+      &nbsp;·&nbsp;<button class="signout" onclick="signOut()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input id="searchBox" type="text" placeholder="Search documents..." oninput="renderList()">
+    <button class="btn-ghost" onclick="loadFiles()">↻ Refresh</button>
+    <button class="btn-primary hidden" id="uploadBtn" style="margin-top:0;width:auto" onclick="openUpload()">＋ Upload</button>
+  </div>
+
+  <div id="fileList" class="list"></div>
+</div>
+
+<!-- ============ UPLOAD MODAL (admins only) ============ -->
+<div id="uploadModal" class="modal-bg hidden">
+  <div class="card" style="max-width:340px">
+    <h1>Upload document</h1>
+    <p class="sub">This file will be visible to everyone with portal access.</p>
+    <label>File</label>
+    <input id="fileInput" type="file">
+    <div style="display:flex;gap:10px;margin-top:22px">
+      <button class="btn-ghost" style="flex:1" onclick="closeUploadModal()">Cancel</button>
+      <button class="btn-primary" style="margin-top:0;flex:1" id="doUploadBtn" onclick="doUpload()">Upload</button>
+    </div>
+    <div class="err" id="uploadErr"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* =========================================================
+   CONFIG — edit these 3 values before you host this file.
+   Get them from Supabase → Project Settings → API
+   ========================================================= */
+const SUPABASE_URL      = "https://hqkeutdxpfbikdfdwzio.sb.co";
+const SUPABASE_ANON_KEY = "sb_publishable_galWq5OfhueWjTj3FcSSXQ_ZMrbSdhW";
+const BUCKET_NAME       = "documents";
+/* ========================================================= */
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false } // require sign-in every visit, nothing stored in the browser
+});
+
+let currentRole = 'viewer';
+let allFiles = [];
+
+function showToast(msg, type){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type||'');
+  t.classList.remove('hidden');
+  setTimeout(()=>t.classList.add('hidden'), 3000);
+}
+
+async function attemptLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const err = document.getElementById('loginErr');
+  const btn = document.getElementById('loginBtn');
+  err.textContent = '';
+  if(!email || !password){ err.textContent = 'Enter your email and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if(error){ err.textContent = 'Incorrect email or password.'; return; }
+
+  // look up this user's role from the profiles table
+  const { data: profile } = await sb.from('profiles').select('role').eq('id', data.user.id).single();
+  currentRole = profile?.role || 'viewer';
+
+  document.getElementById('whoName').textContent = email;
+  const badge = document.getElementById('roleBadge');
+  if(currentRole === 'admin'){
+    badge.textContent = 'Admin';
+    badge.classList.remove('hidden');
+    document.getElementById('uploadBtn').classList.remove('hidden');
+  }
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appScreen').classList.remove('hidden');
+  loadFiles();
+}
+
+async function signOut(){
+  await sb.auth.signOut();
+  location.reload();
+}
+
+async function loadFiles(){
+  const { data, error } = await sb.storage.from(BUCKET_NAME).list('', {
+    limit: 1000, sortBy: { column: 'created_at', order: 'desc' }
+  });
+  if(error){ showToast('Could not load files: ' + error.message, 'err'); return; }
+  allFiles = (data || []).filter(f => !f.name.startsWith('.'));
+  renderList();
+}
+
+function renderList(){
+  const q = document.getElementById('searchBox').value.toLowerCase();
+  const list = document.getElementById('fileList');
+  const filtered = allFiles.filter(f => f.name.toLowerCase().includes(q));
+  if(filtered.length === 0){
+    list.innerHTML = '<div class="empty">No documents found.</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(f => {
+    const sizeKB = f.metadata && f.metadata.size ? (f.metadata.size/1024).toFixed(0) + ' KB' : '';
+    const date = f.created_at ? new Date(f.created_at).toLocaleDateString() : '';
+    const adminBtn = currentRole === 'admin'
+      ? `<button class="btn-danger" onclick="deleteFile('${escapeAttr(f.name)}')">Delete</button>` : '';
+    return `
+      <div class="row" data-name="${escapeAttr(f.name)}">
+        <div>
+          <div class="fname">${escapeHtml(f.name)}</div>
+          <div class="fmeta">${sizeKB}${sizeKB && date ? ' · ' : ''}${date}</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn-ghost" onclick="downloadFile('${escapeAttr(f.name)}')">Download</button>
+        ${adminBtn}
+      </div>`;
+  }).join('');
+}
+
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return s.replace(/'/g, "\\'"); }
+
+async function downloadFile(name){
+  const { data, error } = await sb.storage.from(BUCKET_NAME).createSignedUrl(name, 60);
+  if(error){ showToast('Download failed: ' + error.message, 'err'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+
+async function deleteFile(name){
+  if(!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  const { error } = await sb.storage.from(BUCKET_NAME).remove([name]);
+  if(error){ showToast('Delete failed: ' + error.message, 'err'); return; }
+  showToast('Deleted ' + name, 'ok');
+  loadFiles();
+}
+
+function openUpload(){
+  document.getElementById('fileInput').value = '';
+  document.getElementById('uploadErr').textContent = '';
+  document.getElementById('uploadModal').classList.remove('hidden');
+}
+function closeUploadModal(){ document.getElementById('uploadModal').classList.add('hidden'); }
+
+async function doUpload(){
+  const fileInput = document.getElementById('fileInput');
+  const file = fileInput.files[0];
+  const err = document.getElementById('uploadErr');
+  if(!file){ err.textContent = 'Please choose a file.'; return; }
+  const btn = document.getElementById('doUploadBtn');
+  btn.disabled = true; btn.textContent = 'Uploading...';
+  const { error } = await sb.storage.from(BUCKET_NAME).upload(file.name, file, { upsert: true });
+  btn.disabled = false; btn.textContent = 'Upload';
+  if(error){ err.textContent = 'Upload failed: ' + error.message; return; }
+  showToast('Uploaded ' + file.name, 'ok');
+  closeUploadModal();
+  loadFiles();
+}
+</script>
+</body>
 </html>
