@@ -109,12 +109,12 @@
    CONFIG — edit these 3 values before you host this file.
    Get them from Supabase → Project Settings → API
    ========================================================= */
-const SUPABASE_URL      = "https://hqkeutdxpfbikdfdwzio.supabase.co";
+const SUPABASE_URL      = "https://hqkeutdxpfbikdfdwzio.sb.co";
 const SUPABASE_ANON_KEY = "sb_publishable_galWq5OfhueWjTj3FcSSXQ_ZMrbSdhW";
 const BUCKET_NAME       = "documents";
 /* ========================================================= */
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false } // require sign-in every visit, nothing stored in the browser
 });
 
@@ -137,12 +137,12 @@ async function attemptLogin(){
   err.textContent = '';
   if(!email || !password){ err.textContent = 'Enter your email and password.'; return; }
   btn.disabled = true; btn.textContent = 'Signing in...';
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
   btn.disabled = false; btn.textContent = 'Sign in';
   if(error){ err.textContent = 'Incorrect email or password.'; return; }
 
   // look up this user's role from the profiles table
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
+  const { data: profile } = await sb.from('profiles').select('role').eq('id', data.user.id).single();
   currentRole = profile?.role || 'viewer';
 
   document.getElementById('whoName').textContent = email;
@@ -158,12 +158,12 @@ async function attemptLogin(){
 }
 
 async function signOut(){
-  await supabase.auth.signOut();
+  await sb.auth.signOut();
   location.reload();
 }
 
 async function loadFiles(){
-  const { data, error } = await supabase.storage.from(BUCKET_NAME).list('', {
+  const { data, error } = await sb.storage.from(BUCKET_NAME).list('', {
     limit: 1000, sortBy: { column: 'created_at', order: 'desc' }
   });
   if(error){ showToast('Could not load files: ' + error.message, 'err'); return; }
@@ -201,14 +201,14 @@ function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 function escapeAttr(s){ return s.replace(/'/g, "\\'"); }
 
 async function downloadFile(name){
-  const { data, error } = await supabase.storage.from(BUCKET_NAME).createSignedUrl(name, 60);
+  const { data, error } = await sb.storage.from(BUCKET_NAME).createSignedUrl(name, 60);
   if(error){ showToast('Download failed: ' + error.message, 'err'); return; }
   window.open(data.signedUrl, '_blank');
 }
 
 async function deleteFile(name){
   if(!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-  const { error } = await supabase.storage.from(BUCKET_NAME).remove([name]);
+  const { error } = await sb.storage.from(BUCKET_NAME).remove([name]);
   if(error){ showToast('Delete failed: ' + error.message, 'err'); return; }
   showToast('Deleted ' + name, 'ok');
   loadFiles();
@@ -228,7 +228,7 @@ async function doUpload(){
   if(!file){ err.textContent = 'Please choose a file.'; return; }
   const btn = document.getElementById('doUploadBtn');
   btn.disabled = true; btn.textContent = 'Uploading...';
-  const { error } = await supabase.storage.from(BUCKET_NAME).upload(file.name, file, { upsert: true });
+  const { error } = await sb.storage.from(BUCKET_NAME).upload(file.name, file, { upsert: true });
   btn.disabled = false; btn.textContent = 'Upload';
   if(error){ err.textContent = 'Upload failed: ' + error.message; return; }
   showToast('Uploaded ' + file.name, 'ok');
