@@ -28,17 +28,22 @@
   .err{color:var(--danger);font-size:13px;margin-top:10px;min-height:16px}
 
   .app{max-width:900px;margin:0 auto;padding:28px 20px 60px}
-  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap}
   .topbar h1{font-size:19px;margin:0}
   .topbar .who{color:var(--muted);font-size:13px}
   .topbar .who b{color:var(--text)}
   .badge{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:2px 10px;font-size:11px;margin-left:8px;color:var(--accent)}
+  .breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:14px;font-size:13px;color:var(--muted)}
+  .breadcrumb span.crumb{cursor:pointer;color:var(--accent)}
+  .breadcrumb span.crumb:hover{text-decoration:underline}
+  .breadcrumb span.sep{color:var(--muted)}
   .toolbar{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
-  .toolbar input[type=text]{flex:1;min-width:180px}
+  .toolbar input[type=text]{flex:1;min-width:160px}
   .list{border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
   .row:last-child{border-bottom:none}
   .row:hover{background:var(--panel2)}
+  .row.folder .fname{cursor:pointer}
   .fname{font-size:14px;font-weight:500;word-break:break-word}
   .fmeta{font-size:12px;color:var(--muted);margin-top:2px}
   .spacer{flex:1}
@@ -58,13 +63,32 @@
 <div id="loginScreen" class="center">
   <div class="card">
     <h1>Withly Document Portal</h1>
-    <p class="sub">Sign in with the account you were given.</p>
-    <label>Email</label>
-    <input id="loginEmail" type="email" placeholder="you@team.com" autocomplete="username">
-    <label>Password</label>
-    <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password">
-    <button class="btn-primary" onclick="attemptLogin()" id="loginBtn">Sign in</button>
-    <div class="err" id="loginErr"></div>
+
+    <!-- Admin / named-account login -->
+    <div id="emailLoginView">
+      <p class="sub">Sign in with the account you were given.</p>
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="you@team.com" autocomplete="username">
+      <label>Password</label>
+      <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password">
+      <button class="btn-primary" onclick="attemptLogin()" id="loginBtn">Sign in</button>
+      <div class="err" id="loginErr"></div>
+      <p class="sub" style="margin:16px 0 0">
+        Developer? <span class="crumb" style="cursor:pointer;color:var(--accent)" onclick="showPinView()">Enter PIN instead</span>
+      </p>
+    </div>
+
+    <!-- Developer PIN login -->
+    <div id="pinLoginView" class="hidden">
+      <p class="sub">Enter the team PIN to view and download documents.</p>
+      <label>PIN</label>
+      <input id="pinInput" type="password" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
+      <button class="btn-primary" onclick="attemptPinLogin()" id="pinBtn">Enter</button>
+      <div class="err" id="pinErr"></div>
+      <p class="sub" style="margin:16px 0 0">
+        <span class="crumb" style="cursor:pointer;color:var(--accent)" onclick="showEmailView()">Back to account sign in</span>
+      </p>
+    </div>
   </div>
 </div>
 
@@ -77,20 +101,27 @@
     </div>
   </div>
 
+  <div id="breadcrumb" class="breadcrumb"></div>
+
   <div class="toolbar">
-    <input id="searchBox" type="text" placeholder="Search documents..." oninput="renderList()">
+    <input id="searchBox" type="text" placeholder="Search this folder..." oninput="renderList()">
     <button class="btn-ghost" onclick="loadFiles()">↻ Refresh</button>
-    <button class="btn-primary hidden" id="uploadBtn" style="margin-top:0;width:auto" onclick="openUpload()">＋ Upload</button>
+    <button class="btn-ghost hidden" id="newFolderBtn" onclick="createFolder()">📁+ New folder</button>
+    <button class="btn-ghost hidden" id="uploadFolderBtn" onclick="document.getElementById('folderInput').click()">⇪ Upload folder</button>
+    <button class="btn-primary hidden" id="uploadBtn" style="margin-top:0;width:auto" onclick="openUpload()">＋ Upload file</button>
   </div>
+
+  <!-- hidden input used for whole-folder uploads -->
+  <input type="file" id="folderInput" webkitdirectory directory multiple class="hidden" onchange="uploadFolder(this.files)">
 
   <div id="fileList" class="list"></div>
 </div>
 
-<!-- ============ UPLOAD MODAL (admins only) ============ -->
+<!-- ============ UPLOAD FILE MODAL (admins only) ============ -->
 <div id="uploadModal" class="modal-bg hidden">
   <div class="card" style="max-width:340px">
     <h1>Upload document</h1>
-    <p class="sub">This file will be visible to everyone with portal access.</p>
+    <p class="sub" id="uploadModalSub">This file will be visible to everyone with portal access.</p>
     <label>File</label>
     <input id="fileInput" type="file">
     <div style="display:flex;gap:10px;margin-top:22px">
@@ -112,6 +143,12 @@
 const SUPABASE_URL      = "https://hqkeutdxpfbikdfdwzio.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_galWq5OfhueWjTj3FcSSXQ_ZMrbSdhW";
 const BUCKET_NAME       = "documents";
+
+// Shared "view only" login for developers — this account can never upload or delete,
+// that's enforced by the database (role must be 'admin' there), not by this code.
+const DEV_PIN      = "2255";
+const DEV_EMAIL    = "dev@withly.local";
+const DEV_PASSWORD = "81231100";
 /* ========================================================= */
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -119,7 +156,10 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 
 let currentRole = 'viewer';
-let allFiles = [];
+let currentPath = '';   // '' = root. e.g. "Contracts" or "Contracts/2026"
+let allItems = [];      // folders + files in the current path
+
+function pathJoin(base, name){ return base ? base + '/' + name : name; }
 
 function showToast(msg, type){
   const t = document.getElementById('toast');
@@ -127,6 +167,34 @@ function showToast(msg, type){
   t.className = 'toast ' + (type||'');
   t.classList.remove('hidden');
   setTimeout(()=>t.classList.add('hidden'), 3000);
+}
+
+function showPinView(){
+  document.getElementById('emailLoginView').classList.add('hidden');
+  document.getElementById('pinLoginView').classList.remove('hidden');
+}
+function showEmailView(){
+  document.getElementById('pinLoginView').classList.add('hidden');
+  document.getElementById('emailLoginView').classList.remove('hidden');
+}
+
+async function completeLogin(email, userId){
+  // look up this user's role from the profiles table
+  const { data: profile } = await sb.from('profiles').select('role').eq('id', userId).single();
+  currentRole = profile?.role || 'viewer';
+
+  document.getElementById('whoName').textContent = email;
+  const badge = document.getElementById('roleBadge');
+  if(currentRole === 'admin'){
+    badge.textContent = 'Admin';
+    badge.classList.remove('hidden');
+    document.getElementById('uploadBtn').classList.remove('hidden');
+    document.getElementById('newFolderBtn').classList.remove('hidden');
+    document.getElementById('uploadFolderBtn').classList.remove('hidden');
+  }
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appScreen').classList.remove('hidden');
+  loadFiles();
 }
 
 async function attemptLogin(){
@@ -140,21 +208,20 @@ async function attemptLogin(){
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   btn.disabled = false; btn.textContent = 'Sign in';
   if(error){ err.textContent = 'Incorrect email or password.'; return; }
+  completeLogin(email, data.user.id);
+}
 
-  // look up this user's role from the profiles table
-  const { data: profile } = await sb.from('profiles').select('role').eq('id', data.user.id).single();
-  currentRole = profile?.role || 'viewer';
-
-  document.getElementById('whoName').textContent = email;
-  const badge = document.getElementById('roleBadge');
-  if(currentRole === 'admin'){
-    badge.textContent = 'Admin';
-    badge.classList.remove('hidden');
-    document.getElementById('uploadBtn').classList.remove('hidden');
-  }
-  document.getElementById('loginScreen').classList.add('hidden');
-  document.getElementById('appScreen').classList.remove('hidden');
-  loadFiles();
+async function attemptPinLogin(){
+  const pin = document.getElementById('pinInput').value.trim();
+  const err = document.getElementById('pinErr');
+  const btn = document.getElementById('pinBtn');
+  err.textContent = '';
+  if(pin !== DEV_PIN){ err.textContent = 'Incorrect PIN.'; return; }
+  btn.disabled = true; btn.textContent = 'Entering...';
+  const { data, error } = await sb.auth.signInWithPassword({ email: DEV_EMAIL, password: DEV_PASSWORD });
+  btn.disabled = false; btn.textContent = 'Enter';
+  if(error){ err.textContent = 'Could not sign in. Contact your admin.'; return; }
+  completeLogin('Developer', data.user.id);
 }
 
 async function signOut(){
@@ -162,61 +229,146 @@ async function signOut(){
   location.reload();
 }
 
+function renderBreadcrumb(){
+  const el = document.getElementById('breadcrumb');
+  const parts = currentPath ? currentPath.split('/') : [];
+  let html = `<span class="crumb" onclick="goToPath('')">🏠 Home</span>`;
+  let built = '';
+  parts.forEach(p => {
+    built = pathJoin(built, p);
+    html += `<span class="sep">&nbsp;/&nbsp;</span><span class="crumb" onclick="goToPath('${escapeAttr(built)}')">${escapeHtml(p)}</span>`;
+  });
+  el.innerHTML = html;
+}
+
+function goToPath(path){
+  currentPath = path;
+  loadFiles();
+}
+
 async function loadFiles(){
-  const { data, error } = await sb.storage.from(BUCKET_NAME).list('', {
-    limit: 1000, sortBy: { column: 'created_at', order: 'desc' }
+  const { data, error } = await sb.storage.from(BUCKET_NAME).list(currentPath, {
+    limit: 1000, sortBy: { column: 'name', order: 'asc' }
   });
   if(error){ showToast('Could not load files: ' + error.message, 'err'); return; }
-  allFiles = (data || []).filter(f => !f.name.startsWith('.'));
+  // Supabase returns folders with id === null. Hide the invisible .keep placeholder files.
+  allItems = (data || []).filter(f => f.name !== '.keep' && !f.name.startsWith('.'));
+  renderBreadcrumb();
   renderList();
 }
 
 function renderList(){
   const q = document.getElementById('searchBox').value.toLowerCase();
   const list = document.getElementById('fileList');
-  const filtered = allFiles.filter(f => f.name.toLowerCase().includes(q));
+  const filtered = allItems.filter(f => f.name.toLowerCase().includes(q));
+  const folders = filtered.filter(f => f.id === null);
+  const files = filtered.filter(f => f.id !== null);
+
   if(filtered.length === 0){
-    list.innerHTML = '<div class="empty">No documents found.</div>';
+    list.innerHTML = '<div class="empty">This folder is empty.</div>';
     return;
   }
-  list.innerHTML = filtered.map(f => {
-    const sizeKB = f.metadata && f.metadata.size ? (f.metadata.size/1024).toFixed(0) + ' KB' : '';
-    const date = f.created_at ? new Date(f.created_at).toLocaleDateString() : '';
+
+  const folderRows = folders.map(f => {
+    const fullPath = pathJoin(currentPath, f.name);
     const adminBtn = currentRole === 'admin'
-      ? `<button class="btn-danger" onclick="deleteFile('${escapeAttr(f.name)}')">Delete</button>` : '';
+      ? `<button class="btn-danger" onclick="deleteFolder('${escapeAttr(fullPath)}')">Delete</button>` : '';
     return `
-      <div class="row" data-name="${escapeAttr(f.name)}">
-        <div>
-          <div class="fname">${escapeHtml(f.name)}</div>
-          <div class="fmeta">${sizeKB}${sizeKB && date ? ' · ' : ''}${date}</div>
-        </div>
+      <div class="row folder" data-name="${escapeAttr(f.name)}">
+        <div class="fname" onclick="goToPath('${escapeAttr(fullPath)}')">📁 ${escapeHtml(f.name)}</div>
         <div class="spacer"></div>
-        <button class="btn-ghost" onclick="downloadFile('${escapeAttr(f.name)}')">Download</button>
         ${adminBtn}
       </div>`;
   }).join('');
+
+  const fileRows = files.map(f => {
+    const fullPath = pathJoin(currentPath, f.name);
+    const sizeKB = f.metadata && f.metadata.size ? (f.metadata.size/1024).toFixed(0) + ' KB' : '';
+    const date = f.created_at ? new Date(f.created_at).toLocaleDateString() : '';
+    const adminBtn = currentRole === 'admin'
+      ? `<button class="btn-danger" onclick="deleteFile('${escapeAttr(fullPath)}')">Delete</button>` : '';
+    return `
+      <div class="row" data-name="${escapeAttr(f.name)}">
+        <div>
+          <div class="fname">📄 ${escapeHtml(f.name)}</div>
+          <div class="fmeta">${sizeKB}${sizeKB && date ? ' · ' : ''}${date}</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn-ghost" onclick="downloadFile('${escapeAttr(fullPath)}')">Download</button>
+        ${adminBtn}
+      </div>`;
+  }).join('');
+
+  list.innerHTML = folderRows + fileRows;
 }
 
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return s.replace(/'/g, "\\'"); }
 
-async function downloadFile(name){
-  const { data, error } = await sb.storage.from(BUCKET_NAME).createSignedUrl(name, 60);
+async function downloadFile(path){
+  const { data, error } = await sb.storage.from(BUCKET_NAME).createSignedUrl(path, 60);
   if(error){ showToast('Download failed: ' + error.message, 'err'); return; }
   window.open(data.signedUrl, '_blank');
 }
 
-async function deleteFile(name){
-  if(!confirm(`Delete "${name}"? This cannot be undone.`)) return;
-  const { error } = await sb.storage.from(BUCKET_NAME).remove([name]);
+async function deleteFile(path){
+  if(!confirm(`Delete "${path}"? This cannot be undone.`)) return;
+  const { error } = await sb.storage.from(BUCKET_NAME).remove([path]);
   if(error){ showToast('Delete failed: ' + error.message, 'err'); return; }
-  showToast('Deleted ' + name, 'ok');
+  showToast('Deleted', 'ok');
+  loadFiles();
+}
+
+// Recursively collect every file path inside a folder (folders themselves have no object, only their contents do)
+async function collectAllFilePaths(path){
+  const { data, error } = await sb.storage.from(BUCKET_NAME).list(path, { limit: 1000 });
+  if(error) throw error;
+  let paths = [];
+  for(const item of (data || [])){
+    const itemPath = pathJoin(path, item.name);
+    if(item.id === null){
+      const sub = await collectAllFilePaths(itemPath);
+      paths = paths.concat(sub);
+    } else {
+      paths.push(itemPath);
+    }
+  }
+  return paths;
+}
+
+async function deleteFolder(path){
+  if(!confirm(`Delete the folder "${path}" and everything inside it? This cannot be undone.`)) return;
+  try{
+    const paths = await collectAllFilePaths(path);
+    if(paths.length > 0){
+      const { error } = await sb.storage.from(BUCKET_NAME).remove(paths);
+      if(error) throw error;
+    }
+    showToast('Folder deleted', 'ok');
+    loadFiles();
+  }catch(e){
+    showToast('Delete failed: ' + e.message, 'err');
+  }
+}
+
+async function createFolder(){
+  const name = prompt('New folder name:');
+  if(!name) return;
+  const cleanName = name.trim().replace(/\//g, '-');
+  if(!cleanName) return;
+  // Supabase Storage has no real empty folders — create an invisible placeholder file to represent it
+  const placeholderPath = pathJoin(pathJoin(currentPath, cleanName), '.keep');
+  const { error } = await sb.storage.from(BUCKET_NAME).upload(placeholderPath, new Blob(['']), { upsert: true, contentType: 'text/plain' });
+  if(error){ showToast('Could not create folder: ' + error.message, 'err'); return; }
+  showToast('Folder created', 'ok');
   loadFiles();
 }
 
 function openUpload(){
   document.getElementById('fileInput').value = '';
   document.getElementById('uploadErr').textContent = '';
+  document.getElementById('uploadModalSub').textContent =
+    currentPath ? `Uploading into "${currentPath}".` : 'Uploading into the top-level folder.';
   document.getElementById('uploadModal').classList.remove('hidden');
 }
 function closeUploadModal(){ document.getElementById('uploadModal').classList.add('hidden'); }
@@ -228,11 +380,34 @@ async function doUpload(){
   if(!file){ err.textContent = 'Please choose a file.'; return; }
   const btn = document.getElementById('doUploadBtn');
   btn.disabled = true; btn.textContent = 'Uploading...';
-  const { error } = await sb.storage.from(BUCKET_NAME).upload(file.name, file, { upsert: true });
+  const path = pathJoin(currentPath, file.name);
+  const { error } = await sb.storage.from(BUCKET_NAME).upload(path, file, { upsert: true });
   btn.disabled = false; btn.textContent = 'Upload';
   if(error){ err.textContent = 'Upload failed: ' + error.message; return; }
   showToast('Uploaded ' + file.name, 'ok');
   closeUploadModal();
+  loadFiles();
+}
+
+// Upload an entire folder picked from the user's computer, keeping its internal structure
+async function uploadFolder(fileList){
+  const files = Array.from(fileList || []);
+  if(files.length === 0) return;
+  showToast(`Uploading ${files.length} file(s)...`, '');
+  let failed = 0;
+  for(const file of files){
+    // webkitRelativePath looks like "MyFolder/sub/file.pdf" — keep that structure under the current folder
+    const relative = file.webkitRelativePath || file.name;
+    const path = pathJoin(currentPath, relative);
+    const { error } = await sb.storage.from(BUCKET_NAME).upload(path, file, { upsert: true });
+    if(error) failed++;
+  }
+  document.getElementById('folderInput').value = '';
+  if(failed > 0){
+    showToast(`Done, but ${failed} file(s) failed to upload.`, 'err');
+  } else {
+    showToast('Folder uploaded', 'ok');
+  }
   loadFiles();
 }
 </script>
