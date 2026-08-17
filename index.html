@@ -271,13 +271,14 @@ function renderList(){
 
   const folderRows = folders.map(f => {
     const fullPath = pathJoin(currentPath, f.name);
-    const adminBtn = currentRole === 'admin'
-      ? `<button class="btn-danger" onclick="deleteFolder('${escapeAttr(fullPath)}')">Delete</button>` : '';
+    const adminBtns = currentRole === 'admin'
+      ? `<button class="btn-ghost" onclick="renameFolder('${escapeAttr(fullPath)}')">Rename</button>
+         <button class="btn-danger" onclick="deleteFolder('${escapeAttr(fullPath)}')">Delete</button>` : '';
     return `
       <div class="row folder" data-name="${escapeAttr(f.name)}">
         <div class="fname" onclick="goToPath('${escapeAttr(fullPath)}')">📁 ${escapeHtml(f.name)}</div>
         <div class="spacer"></div>
-        ${adminBtn}
+        ${adminBtns}
       </div>`;
   }).join('');
 
@@ -285,8 +286,9 @@ function renderList(){
     const fullPath = pathJoin(currentPath, f.name);
     const sizeKB = f.metadata && f.metadata.size ? (f.metadata.size/1024).toFixed(0) + ' KB' : '';
     const date = f.created_at ? new Date(f.created_at).toLocaleDateString() : '';
-    const adminBtn = currentRole === 'admin'
-      ? `<button class="btn-danger" onclick="deleteFile('${escapeAttr(fullPath)}')">Delete</button>` : '';
+    const adminBtns = currentRole === 'admin'
+      ? `<button class="btn-ghost" onclick="renameFile('${escapeAttr(fullPath)}')">Rename</button>
+         <button class="btn-danger" onclick="deleteFile('${escapeAttr(fullPath)}')">Delete</button>` : '';
     return `
       <div class="row" data-name="${escapeAttr(f.name)}">
         <div>
@@ -294,19 +296,63 @@ function renderList(){
           <div class="fmeta">${sizeKB}${sizeKB && date ? ' · ' : ''}${date}</div>
         </div>
         <div class="spacer"></div>
+        <button class="btn-ghost" onclick="previewFile('${escapeAttr(fullPath)}')">Preview</button>
         <button class="btn-ghost" onclick="downloadFile('${escapeAttr(fullPath)}')">Download</button>
-        ${adminBtn}
+        ${adminBtns}
       </div>`;
   }).join('');
 
   list.innerHTML = folderRows + fileRows;
 }
 
+function parentPath(path){
+  const idx = path.lastIndexOf('/');
+  return idx === -1 ? '' : path.substring(0, idx);
+}
+
+async function renameFile(path){
+  const oldName = path.split('/').pop();
+  const newName = prompt('Rename file to:', oldName);
+  if(!newName || newName.trim() === '' || newName === oldName) return;
+  const newPath = pathJoin(parentPath(path), newName.trim());
+  const { error } = await sb.storage.from(BUCKET_NAME).move(path, newPath);
+  if(error){ showToast('Rename failed: ' + error.message, 'err'); return; }
+  showToast('Renamed', 'ok');
+  loadFiles();
+}
+
+async function renameFolder(path){
+  const oldName = path.split('/').pop();
+  const newName = prompt('Rename folder to:', oldName);
+  if(!newName || newName.trim() === '' || newName === oldName) return;
+  const cleanName = newName.trim().replace(/\//g, '-');
+  const newFolderPath = pathJoin(parentPath(path), cleanName);
+  try{
+    const filePaths = await collectAllFilePaths(path);
+    for(const filePath of filePaths){
+      const relative = filePath.slice(path.length + 1);
+      const newFilePath = pathJoin(newFolderPath, relative);
+      const { error } = await sb.storage.from(BUCKET_NAME).move(filePath, newFilePath);
+      if(error) throw error;
+    }
+    showToast('Folder renamed', 'ok');
+    loadFiles();
+  }catch(e){
+    showToast('Rename failed: ' + e.message, 'err');
+  }
+}
+
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return s.replace(/'/g, "\\'"); }
 
-async function downloadFile(path){
+async function previewFile(path){
   const { data, error } = await sb.storage.from(BUCKET_NAME).createSignedUrl(path, 60);
+  if(error){ showToast('Preview failed: ' + error.message, 'err'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+
+async function downloadFile(path){
+  const { data, error } = await sb.storage.from(BUCKET_NAME).createSignedUrl(path, 60, { download: true });
   if(error){ showToast('Download failed: ' + error.message, 'err'); return; }
   window.open(data.signedUrl, '_blank');
 }
